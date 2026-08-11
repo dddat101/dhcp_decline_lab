@@ -59,7 +59,7 @@ def get_server_id(pkt):
     return None
 
 
-def wait_dhcp(iface, xid, expected_type, timeout):
+def send_and_wait_dhcp(iface, packet, xid, expected_type, timeout):
     def match(pkt):
         return (
             BOOTP in pkt
@@ -68,7 +68,17 @@ def wait_dhcp(iface, xid, expected_type, timeout):
             and dhcp_message_type(pkt) == expected_type
         )
 
-    pkts = sniff(iface=iface, timeout=timeout, lfilter=match, count=1, store=True)
+    # sniff() creates its capture socket before invoking started_callback.  Send
+    # only from that callback so a fast DHCP reply cannot arrive before the
+    # receive socket exists.
+    pkts = sniff(
+        iface=iface,
+        timeout=timeout,
+        lfilter=match,
+        count=1,
+        store=True,
+        started_callback=lambda: sendp(packet, iface=iface, verbose=False),
+    )
     if not pkts:
         return None
     return pkts[0]
@@ -119,9 +129,9 @@ def main():
     print(f"CLIENT_MAC={mac}")
     print(f"XID=0x{xid:08x}")
     print("Sending DHCPDISCOVER")
-    sendp(discover, iface=args.iface, verbose=False)
-
-    offer = wait_dhcp(args.iface, xid, DHCP_OFFER, args.timeout)
+    offer = send_and_wait_dhcp(
+        args.iface, discover, xid, DHCP_OFFER, args.timeout
+    )
     if offer is None:
         print("ERROR: timeout waiting for DHCPOFFER", file=sys.stderr)
         return 3
@@ -154,9 +164,9 @@ def main():
     )
 
     print("Sending DHCPREQUEST")
-    sendp(request, iface=args.iface, verbose=False)
-
-    ack = wait_dhcp(args.iface, xid, DHCP_ACK, args.timeout)
+    ack = send_and_wait_dhcp(
+        args.iface, request, xid, DHCP_ACK, args.timeout
+    )
     if ack is None:
         print("ERROR: timeout waiting for DHCPACK", file=sys.stderr)
         return 5
